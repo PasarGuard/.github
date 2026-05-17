@@ -5,8 +5,6 @@ on:
     secrets:
       TELEGRAM_BOT_TOKEN:
         required: true
-      GITHUB_TOKEN:
-        required: false
     inputs:
       telegram_targets:
         required: true
