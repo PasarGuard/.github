@@ -13,11 +13,26 @@ on:
 jobs:
   notify-telegram:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Send Telegram Message
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_TARGETS: ${{ inputs.telegram_targets }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_ACTOR: ${{ github.actor }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
+          EVENT_COMPARE_URL: ${{ github.event.compare }}
+          EVENT_COMMITS: ${{ toJSON(github.event.commits) }}
+          EVENT_PR_TITLE: ${{ github.event.pull_request.title }}
+          EVENT_PR_URL: ${{ github.event.pull_request.html_url }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_PR_MERGED: ${{ github.event.pull_request.merged }}
         run: |
           # ── Helpers ────────────────────────────────────────────────────────────
           html_escape() {
@@ -83,18 +98,18 @@ jobs:
           }
 
           # ── Push event ────────────────────────────────────────────────────────
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            BRANCH=$(html_escape "${{ github.ref_name }}")
-            ACTOR=$(html_escape "${{ github.actor }}")
-            REPO=$(html_escape "${{ github.repository }}")
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            BRANCH=$(html_escape "$EVENT_REF_NAME")
+            ACTOR=$(html_escape "$EVENT_ACTOR")
+            REPO=$(html_escape "$EVENT_REPOSITORY")
 
-            COMPARE_URL="${{ github.event.compare }}"
+            COMPARE_URL="$EVENT_COMPARE_URL"
             COMPARE_URL="${COMPARE_URL#"${COMPARE_URL%%[![:space:]]*}"}"
             COMPARE_URL="${COMPARE_URL%"${COMPARE_URL##*[![:space:]]}"}"
 
             EVENT_STATUS="🔔 <b>New Push to $REPO / $BRANCH</b>"
 
-            COMMITS_RAW=$(echo '${{ toJSON(github.event.commits) }}' \
+            COMMITS_RAW=$(printf '%s' "$EVENT_COMMITS" \
               | jq -r '.[] | "- " + (.message | gsub("\n"; " ") | gsub("\r"; " ")) + " (" + (.id | .[0:7]) + ")"' \
               | head -n 10)
 
@@ -104,24 +119,24 @@ jobs:
 
           # ── Pull Request event ────────────────────────────────────────────────
           else
-            ACTOR=$(html_escape "${{ github.actor }}")
-            PR_TITLE=$(html_escape "${{ github.event.pull_request.title }}")
-            PR_URL="${{ github.event.pull_request.html_url }}"
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            REPO=$(html_escape "${{ github.repository }}")
+            ACTOR=$(html_escape "$EVENT_ACTOR")
+            PR_TITLE=$(html_escape "$EVENT_PR_TITLE")
+            PR_URL="$EVENT_PR_URL"
+            PR_NUMBER="$EVENT_PR_NUMBER"
+            REPO=$(html_escape "$EVENT_REPOSITORY")
 
-            if [[ "${{ github.event.action }}" == "opened" ]]; then
+            if [[ "$EVENT_ACTION" == "opened" ]]; then
               PR_STATUS="📢 <b>New Pull Request Opened — $REPO</b>"
-            elif [[ "${{ github.event.action }}" == "closed" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            elif [[ "$EVENT_ACTION" == "closed" && "$EVENT_PR_MERGED" == "true" ]]; then
               PR_STATUS="✅ <b>Pull Request Merged — $REPO</b>"
             else
               PR_STATUS="❌ <b>Pull Request Closed Without Merging — $REPO</b>"
             fi
 
             COMMITS_RAW=$(curl -s \
-              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/commits" \
+              "https://api.github.com/repos/$EVENT_REPOSITORY/pulls/$PR_NUMBER/commits" \
               | jq -r '.[] | "- " + (.commit.message | gsub("\n"; " ") | gsub("\r"; " ")) + " (" + (.sha | .[0:7]) + ")"' \
               | head -n 10)
 
@@ -135,11 +150,11 @@ jobs:
 
           # ── Debug log setup ───────────────────────────────────────────────────
           log "=== GitHub Event Details ==="
-          log "Event: ${{ github.event_name }}"
-          log "Action: ${{ github.event.action }}"
-          log "Actor: ${{ github.actor }}"
-          log "Repository: ${{ github.repository }}"
-          log "Ref: ${{ github.ref_name }}"
+          log "Event: $EVENT_NAME"
+          log "Action: $EVENT_ACTION"
+          log "Actor: $EVENT_ACTOR"
+          log "Repository: $EVENT_REPOSITORY"
+          log "Ref: $EVENT_REF_NAME"
           log ""
           log "=== Telegram Message ==="
           log "$MESSAGE"
@@ -168,6 +183,7 @@ jobs:
               -d "chat_id=$CHAT_ID" \
               ${TOPIC_ID:+-d "message_thread_id=$TOPIC_ID"} \
               -d "parse_mode=HTML" \
+              --data-urlencode 'link_preview_options={"is_disabled":true}' \
               --data-urlencode "text=$MESSAGE")
 
             if echo "$RESPONSE" | grep -q '"ok":true'; then
